@@ -10,6 +10,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+/*
+TODOs
+- code into modules
+- save something into db for practice
+- support for rooms and creating rooms
+    - requires name on hub
+    - endpoint could be some "ws://url/roomofuser"
+- can implement authorization with jwts for example
+- make websocket usage safer
+    - message size limits
+    - input validation for usernames/rooms
+*/
+
 type user struct {
 	Username string `json:"username"`
 }
