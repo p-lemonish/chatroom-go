@@ -1,9 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -14,9 +14,8 @@ import (
 TODOs
 - code into modules
 - save something into db for practice
-- support for rooms and creating rooms
-    - requires name on hub
-    - endpoint could be some "ws://url/roomofuser"
+- support for rooms and creating rooms COMPLETE
+    - remove data of room when last user leaves it
 - can implement authorization with jwts for example
 - make websocket usage safer
     - message size limits
@@ -24,7 +23,8 @@ TODOs
 */
 
 type user struct {
-	Username string `json:"username"`
+	Username string
+	Auth     string
 }
 
 type Client struct {
@@ -35,14 +35,16 @@ type Client struct {
 }
 
 type Hub struct {
+	roomname   string
 	clients    map[*Client]bool
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
 }
 
-func newHub() *Hub {
+func newHub(roomname string) *Hub {
 	return &Hub{
+		roomname:   roomname,
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
@@ -50,21 +52,24 @@ func newHub() *Hub {
 	}
 }
 
-var users = []user{}
-var hub = newHub()
+var hubs = make(map[string]*Hub)
+var users = make(map[string]*user)
+var anoncounter int = 1
 
 func (h *Hub) run() {
 	for {
 		select {
 		case client := <-h.register:
+			log.Println("user joining", h.roomname)
 			h.clients[client] = true
 		case client := <-h.unregister:
+			log.Println("user leaving", h.roomname)
 			if _, ok := h.clients[client]; ok {
-				client.hub.broadcast <- []byte(client.user.Username + " has left the chat!")
-				delete(h.clients, client)
 				close(client.send)
+				delete(h.clients, client)
 			}
 		case message := <-h.broadcast:
+			log.Println("sending message in", h.roomname)
 			for client := range h.clients {
 				select {
 				case client.send <- message:
@@ -84,11 +89,13 @@ var upgrader = websocket.Upgrader{
 type Message struct {
 	Type     string `json:"type"`
 	Username string `json:"username"`
+	Roomname string `json:"roomname"`
 	Text     string `json:"text"`
 }
 
 func (c *Client) readPump() {
 	defer func() {
+		c.hub.broadcast <- []byte(c.user.Username + " has left the chat!")
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
@@ -99,30 +106,14 @@ func (c *Client) readPump() {
 			log.Printf("read error: %v", err)
 			break
 		}
-		switch {
-		case msg.Type == "auth":
-			if msg.Username != "" {
-				pieces := strings.SplitN(msg.Username, "_", -1)
-				for idx, piece := range pieces {
-					if piece == "supersecretmessage" {
-						msg.Username = strings.Join(pieces[:idx], "")
-					}
-				}
-				c.user.Username = msg.Username
-				c.hub.broadcast <- []byte(c.user.Username + " has joined the chat!")
-			} else {
-				c.user.Username = "anonymous"
-				log.Println("Didn't find username in auth call. Setting user as anonymous")
-			}
-		case msg.Type == "message":
-			message := append([]byte(c.user.Username+": "), []byte(msg.Text)...)
-			c.hub.broadcast <- message
-		}
+		message := append([]byte(c.user.Username+": "), []byte(msg.Text)...)
+		c.hub.broadcast <- message
 	}
 }
 
 func (c *Client) writePump() {
 	defer func() {
+		c.hub.unregister <- c
 		c.conn.Close()
 	}()
 	for {
@@ -143,19 +134,33 @@ func (c *Client) writePump() {
 }
 
 func handleWebsocket(ctx *gin.Context) {
-	go hub.run()
 	conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
 		return
 	}
+	var msg Message
+	if err := conn.ReadJSON(&msg); err != nil {
+		log.Printf("readjson error: %v", err)
+		return
+	}
+	roomname := msg.Roomname
+	hub, exists := hubs[roomname]
+	log.Println("roomname, exists:", roomname, exists)
+	if !exists {
+		hub = newHub(roomname)
+		log.Println("creating new hub", roomname)
+		hubs[roomname] = hub
+	}
+	go hub.run()
 	client := &Client{
 		hub:  hub,
 		conn: conn,
 		send: make(chan []byte, 256),
-		user: &user{},
+		user: &user{msg.Username, "supersecretmessagefromgo"},
 	}
 	client.hub.register <- client
+	client.hub.broadcast <- []byte(client.user.Username + " has joined the chat!")
 	go client.writePump()
 	go client.readPump()
 }
@@ -167,9 +172,20 @@ func getUsers(ctx *gin.Context) {
 func postUser(ctx *gin.Context) {
 	var newUser user
 	if err := ctx.BindJSON(&newUser); err != nil {
+		ctx.IndentedJSON(http.StatusBadRequest, err)
 		return
 	}
-	users = append(users, newUser)
+	if newUser.Username == "" {
+		newUser.Username = fmt.Sprintf("anonymous%d", anoncounter)
+		anoncounter++
+	}
+	_, exists := users[newUser.Username]
+	if exists {
+		ctx.IndentedJSON(http.StatusBadRequest, newUser.Username)
+		return
+	}
+	users[newUser.Username] = &newUser
+	ctx.IndentedJSON(http.StatusOK, newUser.Username)
 }
 
 func main() {
@@ -179,7 +195,7 @@ func main() {
 	r.Use(cors.New(config))
 	r.GET("/users", getUsers)
 	r.POST("/start", postUser)
-	r.GET("/main", func(ctx *gin.Context) {
+	r.GET("/chat", func(ctx *gin.Context) {
 		handleWebsocket(ctx)
 	})
 	r.Run()
