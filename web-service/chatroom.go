@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -14,12 +15,11 @@ import (
 TODOs
 - code into modules
 - save something into db for practice
-- support for rooms and creating rooms COMPLETE
-    - remove data of room when last user leaves it
+- remove data of room when last user leaves it
 - can implement authorization with jwts for example
+    - currently as "supersecretmessagefromgo"
 - make websocket usage safer
     - message size limits
-    - input validation for usernames/rooms
 */
 
 type user struct {
@@ -32,6 +32,23 @@ type Client struct {
 	conn *websocket.Conn
 	send chan []byte
 	user *user
+}
+
+type SafeCounter struct {
+	mu  sync.Mutex
+	val int
+}
+
+func (counter *SafeCounter) Inc() {
+	counter.mu.Lock()
+	counter.val++
+	counter.mu.Unlock()
+}
+
+func (counter *SafeCounter) Val() int {
+	counter.mu.Lock()
+	defer counter.mu.Unlock()
+	return counter.val
 }
 
 type Hub struct {
@@ -54,22 +71,18 @@ func newHub(roomname string) *Hub {
 
 var hubs = make(map[string]*Hub)
 var users = make(map[string]*user)
-var anoncounter int = 1
 
 func (h *Hub) run() {
 	for {
 		select {
 		case client := <-h.register:
-			log.Println("user joining", h.roomname)
 			h.clients[client] = true
 		case client := <-h.unregister:
-			log.Println("user leaving", h.roomname)
 			if _, ok := h.clients[client]; ok {
 				close(client.send)
 				delete(h.clients, client)
 			}
 		case message := <-h.broadcast:
-			log.Println("sending message in", h.roomname)
 			for client := range h.clients {
 				select {
 				case client.send <- message:
@@ -146,18 +159,21 @@ func handleWebsocket(ctx *gin.Context) {
 	}
 	roomname := msg.Roomname
 	hub, exists := hubs[roomname]
-	log.Println("roomname, exists:", roomname, exists)
 	if !exists {
 		hub = newHub(roomname)
-		log.Println("creating new hub", roomname)
 		hubs[roomname] = hub
+	}
+	user, exists := users[msg.Username]
+	if !exists {
+		log.Println("user does not exist")
+		return
 	}
 	go hub.run()
 	client := &Client{
 		hub:  hub,
 		conn: conn,
 		send: make(chan []byte, 256),
-		user: &user{msg.Username, "supersecretmessagefromgo"},
+		user: user,
 	}
 	client.hub.register <- client
 	client.hub.broadcast <- []byte(client.user.Username + " has joined the chat!")
@@ -169,15 +185,18 @@ func getUsers(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, users)
 }
 
+var anoncounter = SafeCounter{val: 1}
+
 func postUser(ctx *gin.Context) {
 	var newUser user
+	newUser.Auth = "supersecretmessagefromgo"
 	if err := ctx.BindJSON(&newUser); err != nil {
 		ctx.IndentedJSON(http.StatusBadRequest, err)
 		return
 	}
 	if newUser.Username == "" {
-		newUser.Username = fmt.Sprintf("anonymous%d", anoncounter)
-		anoncounter++
+		newUser.Username = fmt.Sprintf("anonymous%d", anoncounter.Val())
+		anoncounter.Inc()
 	}
 	_, exists := users[newUser.Username]
 	if exists {
@@ -185,7 +204,7 @@ func postUser(ctx *gin.Context) {
 		return
 	}
 	users[newUser.Username] = &newUser
-	ctx.IndentedJSON(http.StatusOK, newUser.Username)
+	ctx.IndentedJSON(http.StatusOK, newUser)
 }
 
 func main() {
