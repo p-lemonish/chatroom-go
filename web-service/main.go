@@ -15,7 +15,7 @@ TODOs
 func main() {
 	r := gin.Default()
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:5173"}
+	config.AllowOrigins = []string{"http://localhost:5173", "http://chatroom-frontend"}
 	r.Use(cors.New(config))
 	r.GET("/users", getUsers)
 	r.POST("/start", postUser)
