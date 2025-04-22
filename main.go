@@ -17,8 +17,8 @@ func main() {
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{
 		"http://localhost:5173",
-		"http://chatroom-frontend",
-		"http://chatroom-frontend:80"}
+		"http://100.27.185.143",
+		"http://100.27.185.143:80"}
 	r.Use(cors.New(config))
 	r.GET("/users", getUsers)
 	r.POST("/start", postUser)
