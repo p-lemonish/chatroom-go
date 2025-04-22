@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -93,24 +94,33 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
+	ticker := time.NewTicker(50 * time.Second)
 	defer func() {
+		ticker.Stop()
 		c.conn.Close()
 	}()
+
 	for {
-		message, ok := <-c.send
-		if !ok {
-			c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-			return
-		}
-		w, err := c.conn.NextWriter(websocket.TextMessage)
-		if err != nil {
-			log.Printf("writePump NextWriter error: %v", err)
-			return
-		}
-		w.Write(message)
-		if err := w.Close(); err != nil {
-			log.Printf("writePump close error: %v", err)
-			return
+		select {
+		case message, ok := <-c.send:
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			w, err := c.conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				log.Printf("writePump NextWriter error: %v", err)
+				return
+			}
+			w.Write(message)
+			if err := w.Close(); err != nil {
+				log.Printf("writePump close error: %v", err)
+				return
+			}
+		case <-ticker.C:
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
