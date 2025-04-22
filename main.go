@@ -17,7 +17,8 @@ func main() {
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{
 		"http://localhost:5173",
-		"http://100.27.185.143",
+		"http://18.192.11.118",
+		"http://18.192.11.118:80",
 		"http://100.27.185.143:80"}
 	r.Use(cors.New(config))
 	r.GET("/users", getUsers)
