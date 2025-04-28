@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"os"
 
 	"github.com/gin-contrib/cors"
@@ -27,6 +28,9 @@ func main() {
 	r.POST("/start", postUser)
 	r.GET("/chat", func(ctx *gin.Context) {
 		handleWebsocket(ctx)
+	})
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	r.Run()
 }
