@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -11,7 +12,20 @@ import (
 
 var users = make(map[string]*user)
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		allowed := os.Getenv("ALLOWED_ORIGIN")
+		if allowed == "" {
+			log.Fatal("No allowed origin set")
+		}
+
+		origin := r.Header.Get("Origin")
+		if allowed == origin {
+			return true
+		}
+
+		log.Printf("Rejected websocket connection from origin %s", origin)
+		return false
+	},
 }
 
 func getUsers(ctx *gin.Context) {
