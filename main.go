@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"os"
 
@@ -10,17 +11,20 @@ import (
 
 /*
 TODOs
-- save something into db for practice
 - make websocket usage safer
     - message size limits
 */
 
 func main() {
 	r := gin.Default()
+	r.SetTrustedProxies([]string{
+		"172.17.0.0/16", // Docker bridge subnet
+	})
+
 	config := cors.DefaultConfig()
 	allowed := os.Getenv("ALLOWED_ORIGIN")
 	if allowed == "" {
-		allowed = "http://localhost:5173"
+		log.Fatal("No allowed origin set")
 	}
 	config.AllowOrigins = []string{allowed}
 	r.Use(cors.New(config))
